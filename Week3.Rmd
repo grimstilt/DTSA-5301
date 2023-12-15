@@ -1,0 +1,116 @@
+---
+title: "NYPD Shooting Incident Data Report"
+author: "Srinath Vedantam"
+date: "12/11/2023"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Objective
+For this project I am using the NYPD Shooting Incident Data Report available at <https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD>. This data is a list of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year.The objective is to analyse this data and draw useful conclusions on murder incidents in the boroughs of NYC. 
+
+### Download/Import
+```{r data import}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+dest_file <- "./NYPD_Shooting_Incident_Data__Historic_.csv"
+download.file(url_in, dest_file)
+data_set <- read.csv(dest_file)
+
+```
+
+### Tidy and Transform
+```{r tidying}
+suppressMessages(library(tidyverse))
+data_set <- data_set %>% select(!c(Longitude, Latitude, Lon_Lat, LOC_OF_OCCUR_DESC, PRECINCT, JURISDICTION_CODE, LOC_CLASSFCTN_DESC, INCIDENT_KEY))
+
+# Removing rows that don't have a value or have an unknown value
+
+data_set = filter(data_set, LOCATION_DESC != "" & LOCATION_DESC != " " & LOCATION_DESC != "(null)" & BORO != " " & BORO != "" & PERP_SEX %in% c("M", "F") & PERP_AGE_GROUP != "UNKNOWN" & PERP_AGE_GROUP != "" & PERP_RACE != "UNKNOWN" & PERP_RACE != "" & VIC_RACE != "UNKNOWN" &  VIC_RACE != "" & VIC_AGE_GROUP != "UNKNOWN" & VIC_AGE_GROUP != "")
+
+```
+
+### Summary of NYPD data
+```{r summary}
+summary(data_set)
+```
+
+### Visualization & Analysis
+I wanted to focus on murders in boroughs of NY and identify which boroughs could be considered dangerous for a particular race. Below we see number of murders per each borough.
+
+```{r visualization, echo=FALSE}
+murders <- filter(data_set, STATISTICAL_MURDER_FLAG == "true")
+
+suppressMessages(library(ggplot2))
+murder_count <- ggplot(data = murders, aes(x=BORO)) + geom_bar() + labs(title = "Murders in Boroughs of NY", x = "Boroughs of NY", y = "count of murders") + theme_classic()
+murder_count
+
+```
+
+Below is the visualization for racial profile of the victims so as to get an idea which borough might be considered dangerous.
+
+```{r victims, echo=FALSE}
+murders_man <- filter(murders, BORO == "MANHATTAN")
+vic_man <- ggplot(data = murders_man, aes(x=VIC_RACE)) + geom_bar() + labs(title = "Murder victims in Manhattan", x = "Victim Race", y = "count of murders") + theme_classic()
+vic_man
+
+murders_bronx <- filter(murders, BORO == "BRONX")
+vic_bronx <- ggplot(data = murders_bronx, aes(x=VIC_RACE)) + geom_bar() + labs(title = "Murder victims in Bronx", x = "Victim Race", y = "count of murders") + theme_classic()
+vic_bronx
+
+murders_brook <- filter(murders, BORO == "BROOKLYN")
+vic_brook <- ggplot(data = murders_brook, aes(x=VIC_RACE)) + geom_bar() + labs(title = "Murder victims in Brooklyn", x = "Victim Race", y = "count of murders") + theme_classic()
+vic_brook
+
+murders_staten <- filter(murders, BORO == "STATEN ISLAND")
+vic_staten <- ggplot(data = murders_staten, aes(x=VIC_RACE)) + geom_bar() + labs(title = "Murder victims in Staten Island", x = "Victim Race", y = "count of murders") + theme_classic()
+vic_staten
+
+murders_queens <- filter(murders, BORO == "QUEENS")
+vic_queens <- ggplot(data = murders_queens, aes(x=VIC_RACE)) + geom_bar() + labs(title = "Murder victims in Queens", x = "Victim Race", y = "count of murders") + theme_classic()
+vic_queens
+
+```
+
+Looking at the above graphs, it can be deduced that Black and White Hispanic seem to be highest number of murder victims. Also, that Brooklyn and Bronx have the highest amount of murder crimes compared to other boroughs of NYC.
+
+### Modeling
+
+I am using simple modeling here, namely logistic regression to estimate the probability of a murder happening based on characteristics of the victim such as age, sex, race, or factors such as boro or time.
+```{r logistic regression, echo=FALSE}
+
+suppressMessages(library(lubridate)) 
+
+data_set$INC_DAY = wday(mdy(data_set$OCCUR_DATE), label = TRUE)
+data_set$INC_HOUR = hour(hms(as.character(data_set$OCCUR_TIME)))
+data_set$VIC_AGE_GROUP = as.factor(data_set$VIC_AGE_GROUP)
+data_set$VIC_RACE = as.factor(data_set$VIC_RACE)
+data_set$VIC_SEX = as.factor(data_set$VIC_SEX)
+data_set$INC_DAY = as.factor(data_set$INC_DAY)
+data_set$INC_HOUR = as.factor(data_set$INC_HOUR)
+data_set$STATISTICAL_MURDER_FLAG = as.factor(data_set$STATISTICAL_MURDER_FLAG)
+data_set$BORO = as.factor(data_set$BORO)
+
+glm.fit <- glm(STATISTICAL_MURDER_FLAG ~ VIC_RACE + VIC_SEX + VIC_AGE_GROUP + INC_DAY + INC_HOUR + BORO, data = data_set, family = binomial)
+
+summary(glm.fit)
+
+```
+
+I don't see any significant estimates that I can draw from here other than that being in the age group of 65+ increases the chances of murders.
+
+### Bias
+There's a potential bias here of thinking that certain race is being targeted more than the others. However, we have to understand that the number of rows has been reduced significantly when unknown and null values have been removed. With limited data, there's plenty of room for skewed deductions and bias. This can be mitigated in few ways such as obtaining more labeled data, using data science techniques to assign a certain value to these rows instead of removing them etc.
+With the data I have, I tried to mitigate this issue by looking at a table of race of perpetrator v race of victims, as shown below:
+
+```{r, echo=FALSE}
+table(murders$PERP_RACE, murders$VIC_RACE)
+```
+
+Looking at this table, I can say that my previous deduction is not true because it is evident that the murder rate within Black community is high; that doesn't necessarily mean they are being targeted the most. Also, biases like these can contribute to discrimination and other unwanted behaviors. So it is important to use the methods identified above and more to mitigate any kind of biases.
+
+
