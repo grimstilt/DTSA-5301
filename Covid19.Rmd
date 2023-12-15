@@ -1,0 +1,111 @@
+---
+title: "Covid 19 cases in Canada"
+author: "Srinath Vedantam"
+date: "2023-12-14"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Import data
+
+The data set being used is COVID-19 Data Repository by the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University. The data set is a collection of Covid cases and deaths across the globe, aggregated from multiple sources that are listed under README of the repository. The csv files are available at <https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series>.
+
+```{r import, echo=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names <- c("time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_global.csv")
+urls <- str_c(url_in,file_names)
+options(readr.show_col_types = FALSE)
+
+global_cases <- read_csv(urls[1])
+
+global_deaths <- read_csv(urls[2])
+
+```
+
+### Transform
+For this project, I tried to focus on Covid cases in Canada. The tidying and transformation efforts were focused on removing Latitude and Longitude details, and using a separate dataset to get the population of each country into the global cases data set provided above.The final summaries can be found below.
+```{r tidy/transform, echo=FALSE, warning=FALSE, message=FALSE}
+library(lubridate)
+
+global_cases <- global_cases %>% pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long), names_to = "date", values_to = "cases") %>% select(-c(Lat, Long))
+global_deaths <- global_deaths %>% pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long), names_to = "date", values_to = "deaths") %>% select(-c(Lat, Long))
+
+global <- global_cases %>% full_join(global_deaths) %>% rename(Country_Region = `Country/Region`, Province_State = `Province/State`) %>% mutate(date = mdy(date))
+global <- global %>% filter(cases > 0)
+
+global <- global %>% unite("Combined_Key", c(Province_State, Country_Region), sep = ", ", na.rm = TRUE, remove = FALSE)
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+uid <- read_csv(uid_lookup_url) %>% select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+global <- global %>% left_join(uid, by = c("Province_State", "Country_Region")) %>% select(-c(UID, FIPS)) %>% select(Province_State, Country_Region, date, cases, deaths, Population, Combined_Key)
+
+CANADA <- global %>% filter(Country_Region == "Canada")
+
+```
+Summary of Global cases and Deaths:
+```{r Global, echo=FALSE, warning=FALSE, message=FALSE}
+summary(global)
+```
+Summary of Canada cases and Deaths:
+```{r Canada, echo=FALSE, warning=FALSE, message=FALSE}
+summary(CANADA)
+```
+
+### Visualization
+I wanted to see how the introduction of Covid vaccine has affected the cases and deaths in Canada. There's a definite correlation between vaccinations and drop in the number of cases/deaths.
+```{r Canada Vis, echo=FALSE, warning=FALSE, message=FALSE}
+CANADA_by_state <- CANADA %>% group_by(Province_State, Country_Region, date) %>% summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population) ) %>% mutate(deaths_per_thou = deaths *1000 / Population, cases_per_thou = cases *1000 / Population) %>% select(Province_State, Country_Region, date, cases, deaths, deaths_per_thou, cases_per_thou, Population) %>% ungroup
+
+CANADA_totals <- CANADA_by_state %>% group_by(Country_Region, date) %>% summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>% mutate(deaths_per_mil = deaths *1000000 / Population) %>% select(Country_Region, date, cases, deaths, deaths_per_mil, Population) %>% ungroup
+
+CANADA_totals %>% filter(cases > 0) %>% ggplot(aes(x = date, y = cases)) + geom_line(aes(color = "cases")) + geom_point(aes(color = "cases")) + geom_line(aes(y = deaths, color = "deaths")) + geom_point(aes(y = deaths, color = "deaths")) + scale_y_log10() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + labs(title = "COVID19 total cases in Canada", y= NULL)
+
+
+CANADA_totals_before <- CANADA_totals %>% filter(date < "2020-12-14")
+
+CANADA_totals_before %>% filter(cases > 0) %>% ggplot(aes(x = date, y = cases)) + geom_line(aes(color = "cases")) + geom_point(aes(color = "cases")) + geom_line(aes(y = deaths, color = "deaths")) + geom_point(aes(y = deaths, color = "deaths")) + scale_y_log10() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + labs(title = "COVID19 in Canada before Vaccine", y= NULL)
+
+
+CANADA_totals_after <- CANADA_totals %>% filter(date > "2020-12-14")
+
+CANADA_totals_after %>% filter(cases > 0) %>% ggplot(aes(x = date, y = cases)) + geom_line(aes(color = "cases")) + geom_point(aes(color = "cases")) + geom_line(aes(y = deaths, color = "deaths")) + geom_point(aes(y = deaths, color = "deaths")) + scale_y_log10() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + labs(title = "COVID19 in Canada after Vaccine", y= NULL)
+
+```
+
+Additionally I wanted to check the same effect in Ontario, which is the province with highest population. Again, there's a definite correlation between vaccinations and drop in the number of cases/deaths.
+```{r Ontario, echo=FALSE, warning=FALSE, message=FALSE}
+state <- "Ontario"
+
+State_Totals <- CANADA_by_state %>% group_by(Province_State, date) %>% summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>% mutate(deaths_per_thou = deaths *1000 / Population, cases_per_thou = cases *1000 / Population) %>% select(Province_State, date, cases, deaths, deaths_per_thou, cases_per_thou, Population) %>% ungroup
+
+State_Totals %>% filter(Province_State == state) %>% filter(cases > 0) %>% ggplot(aes(x = date, y = cases)) + geom_line(aes(color = "cases")) + geom_point(aes(color = "cases")) + geom_line(aes(y = deaths, color = "deaths")) + geom_point(aes(y = deaths, color = "deaths")) + scale_y_log10() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + labs(title = str_c("COVID19 total cases in  ", state), y= NULL)
+
+Ontario_before <- State_Totals %>% filter(Province_State == state, date < "2020-12-14")
+
+Ontario_before %>% filter(cases > 0) %>% ggplot(aes(x = date, y = cases)) + geom_line(aes(color = "cases")) + geom_point(aes(color = "cases")) + geom_line(aes(y = deaths, color = "deaths")) + geom_point(aes(y = deaths, color = "deaths")) + scale_y_log10() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + labs(title = "COVID19 in Ontario before Vaccine", y= NULL)
+
+Ontario_after <- State_Totals %>% filter(Province_State == state, date > "2020-12-14")
+
+Ontario_after %>% filter(cases > 0) %>% ggplot(aes(x = date, y = cases)) + geom_line(aes(color = "cases")) + geom_point(aes(color = "cases")) + geom_line(aes(y = deaths, color = "deaths")) + geom_point(aes(y = deaths, color = "deaths")) + scale_y_log10() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + labs(title = "COVID19 in Ontario after Vaccine", y= NULL)
+```
+
+### Modeling
+Here I used a linear model to predict the deaths per cases. Below I have a graph that shows the predictions in red and actual deaths in blue. When compared with timeline of total cases, the number of deaths at certain point is higher than predicted value and then eventually goes lower than the predicted value.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+State_Totals <- CANADA_by_state %>% group_by(Province_State) %>% summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>% select(Province_State, cases, deaths, Population) %>% ungroup
+
+mod <- lm(deaths ~ cases, data = State_Totals)
+State_totals_pred <- State_Totals %>% mutate(pred = predict(mod))
+State_totals_pred %>% ggplot() + geom_point(aes(x = cases, y = deaths), color = "blue") + geom_point(aes(x = cases, y = pred), col = "red")
+
+```
+
+### Bias
+Possible bias in this analysis would be with how we estimate deaths. Covid may not have been the reason or at least the primary reason for every recorded death in this data set. Another bias would be with the estimate of cases, the number of cases reported could be slightly inaccurate. The mitigation for estimate of cases would be to collect data from multiple sources and collate them - which was done by Johns Hopkins University. A possible bias in my analysis would be with how I correlated vaccinations with decrease in cases and deaths. The decrease may not be entirely due to vaccinations and could be due to increased awareness in people. I tried to use linear model prediction to get more granularity to this claim and the results are inconclusive.
